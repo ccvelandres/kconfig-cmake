@@ -11,14 +11,10 @@ set(__KCONFIG_CMAKE_INCLUDE_GUARD__ TRUE)
 
 # Minimum version
 cmake_minimum_required(VERSION 3.19)
+include(FetchContent)
 
 # Module needs git
-find_package(Git)
-
-if(NOT GIT_FOUND)
-    message(FATAL_ERROR "Could not find Git")
-endif()
-
+find_package(Git REQUIRED)
 # scripts needs python (and prefer python3)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
@@ -59,6 +55,41 @@ macro(kconfig_make_directory path)
 endmacro()
 
 # #######################################################################
+# kconfig_get_binaries <binpath>
+#
+# Downloads prebuilt kconfig binaries (conf and mconf)
+# binpath: path to placce binaries
+macro(kconfig_get_binaries binpath)
+    message(CHECK_START "Retrieving kconfig binaries...")
+
+    # Detect arch
+    if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Windows")
+        set(_system "win")
+        set(_arch "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    elseif(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Linux")
+        set(_system "linux")
+        set(_arch "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    else()
+        message(CHECK_FAIL "Unsupported host system, could not retrieve prebuilt binaries")
+        return()
+    endif()
+
+    # Download binaries
+    file(MAKE_DIRECTORY "${binpath}")
+    FetchContent_Declare(
+        __kconfig_binary
+        URL ${KCONFIG_BINARIES_BASE_URL}/releases/latest/download/kbuild-${_system}-${_arch}.tar.gz
+        SOURCE_DIR "${binpath}"
+        UPDATE_COMMAND ""
+        CONFIGURE_COMMAND ""
+    )
+    FetchContent_MakeAvailable(__kconfig_binary)
+
+    kconfig_find_bin(${binpath} KCONFIG_CONF_BIN conf)
+    kconfig_find_bin(${binpath} KCONFIG_MCONF_BIN mconf)
+endmacro()
+
+# #######################################################################
 # kconfig_find_bin <paths> <name> <bin [...]>
 #
 # Finds program with name bin... and stores it to name
@@ -66,24 +97,18 @@ endmacro()
 # name: variable name to store path to program
 # bin...: binary to find
 macro(kconfig_find_bin paths name bin)
-    message(CHECK_START "Finding ${bin}")
-
     if(NOT ${name})
         find_program(${name} NAMES ${bin} ${ARGN} PATHS ${paths} HINTS ${paths})
 
         if(NOT ${name})
             set(${name}_FOUND 0)
-            message(CHECK_FAIL "not found")
         else()
             set(${name}_FOUND 1)
-            message(CHECK_PASS "found: ${${name}}")
         endif()
     elseif(NOT EXISTS "${${name}}")
         set(${name}_FOUND 0)
-        message(CHECK_FAIL "not found")
     else()
         set(${name}_FOUND 1)
-        message(CHECK_PASS "found: ${${name}}")
     endif()
 endmacro()
 
@@ -160,7 +185,7 @@ function(kconfig_defconfig kconfig_file defconfig dotconfig autoheader autoconf 
             --${KCONFIG_DEFCONFIG_OPT} ${defconfig}
             ${kconfig_file}
             WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-            OUTPUT_QUIET ERROR_QUIET
+            OUTPUT_QUIET
             RESULT_VARIABLE ret
         )
 
@@ -194,7 +219,7 @@ function(kconfig_merge_kconfigs merged_path source_var)
         --title ${PROJECT_NAME}
         --sources ${kconfig_sources}
         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-        OUTPUT_QUIET ERROR_QUIET
+        OUTPUT_QUIET
         RESULT_VARIABLE ret
     )
 
@@ -349,16 +374,18 @@ function(kconfig_add_kconfig kconfig_file)
 endfunction()
 
 # #######################################################################
-# kconfig_add_target <target>
+# kconfig_add_target <target> <kconfig>
 #
 # setup target with kconfig
 # target: target to configure
-function(kconfig_add_target target)
+function(kconfig_add_target target kconfig)
     message(DEBUG "kconfig_add_target")
     message(DEBUG "   target:   ${target}")
+    message(DEBUG "   kconfig:   ${kconfig}")
 
     # add target to list of kconfig targets
     set_property(GLOBAL APPEND PROPERTY KCONFIG_TARGETS "${target}")
+    set_property(TARGET ${target} APPEND PROPERTY KCONFIG_SOURCES "${kconfig}")
 endfunction()
 
 # #######################################################################
@@ -419,7 +446,7 @@ function(kconfig_oldconfig kconfig_file dotconfig autoheader autoconf tristate)
             --${KCONFIG_OLDCONFIG_OPT}
             ${kconfig_file}
             WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-            OUTPUT_QUIET ERROR_QUIET
+            OUTPUT_QUIET
             RESULT_VARIABLE ret
         )
     else()
@@ -455,7 +482,7 @@ endfunction()
 kconfig_default_variable(KCONFIG_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 kconfig_default_variable(KCONFIG_BINARY_DIR "${CMAKE_BINARY_DIR}/Kconfig")
 kconfig_default_variable(KCONFIG_KBUILD_DIR "${KCONFIG_BINARY_DIR}/tools")
-kconfig_default_variable(KCONFIG_CONFIGS_DIR "${CMAKE_SOURCE_DIR}/configs")
+kconfig_default_variable(KCONFIG_CONFIGS_DIR "${CMAKE_SOURCE_DIR}/config")
 kconfig_default_variable(KCONFIG_CONFIG_PREFIX "CONFIG_")
 kconfig_default_variable(KCONFIG_CONFIG_FRAGMENT_DIR "${KCONFIG_BINARY_DIR}/fragments")
 kconfig_default_variable(KCONFIG_INCLUDE_PATH "${KCONFIG_BINARY_DIR}/include")
@@ -466,6 +493,7 @@ kconfig_default_variable(KCONFIG_MERGED_KCONFIG_PATH "${KCONFIG_BINARY_DIR}/Kcon
 kconfig_default_variable(KCONFIG_DOTCONFIG_PATH "${KCONFIG_BINARY_DIR}/.config")
 kconfig_default_variable(KCONFIG_PREINCLUDE_AUTOCONF ON)
 kconfig_default_variable(KCONFIG_USE_VARIABLES OFF)
+kconfig_default_variable(KCONFIG_BINARIES_BASE_URL "https://github.com/ccvelandres/kbuild-binaries")
 
 # Create paths
 file(MAKE_DIRECTORY ${KCONFIG_BINARY_DIR} ${KCONFIG_CONFIG_FRAGMENT_DIR})
@@ -479,9 +507,9 @@ kconfig_make_directory(KCONFIG_DOTCONFIG_PATH)
 kconfig_find_bin("${KCONFIG_KBUILD_DIR}" KCONFIG_CONF_BIN kconfig-conf conf)
 kconfig_find_bin("${KCONFIG_KBUILD_DIR}" KCONFIG_MCONF_BIN kconfig-mconf mconf)
 
-# Check if binaries are found
+# Check if binaries are found, else download prebuilts
 if(NOT KCONFIG_CONF_BIN_FOUND OR NOT KCONFIG_MCONF_BIN_FOUND)
-    message(FATAL_ERROR "Kconfig binaries not found, try setting KCONFIG_KBUILD_DIR")
+    kconfig_get_binaries(${CMAKE_CURRENT_LIST_DIR}/kbuild-binaries)
 endif()
 
 # Verify if vars are set
@@ -499,7 +527,9 @@ endif()
 
 # check if KCONFIG_DEFCONFIG exists
 if(NOT EXISTS "${KCONFIG_DEFCONFIG}")
-    message(FATAL_ERROR "KCONFIG_DEFCONFIG does not exist")
+    get_filename_component(KCONFIG_DEFCONFIG_DIR ${KCONFIG_DEFCONFIG} DIRECTORY)
+    file(MAKE_DIRECTORY ${KCONFIG_DEFCONFIG_DIR})
+    file(TOUCH ${KCONFIG_DEFCONFIG})
 endif()
 
 # preinclude autoconf header if enabled
@@ -514,135 +544,135 @@ include_directories("${KCONFIG_INCLUDE_PATH}")
 set(KCONFIG_BIN_MCONF "")
 set(KCONFIG_MERGE_PYBIN "${KCONFIG_MODULE_PATH}/kconfig-merge.py")
 
-# Add menuconfig target
-add_custom_target(
-    menuconfig
-    ${CMAKE_COMMAND} -E env
-    KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
-    KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
-    KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
-    KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
-    CONFIG_=${KCONFIG_CONFIG_PREFIX}
-    ${KCONFIG_MCONF_BIN}
-    ${KCONFIG_MERGED_KCONFIG_PATH}
-    WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-    USES_TERMINAL
-)
+# # Add menuconfig target
+# add_custom_target(
+#     menuconfig
+#     ${CMAKE_COMMAND} -E env
+#     KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+#     KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+#     KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+#     KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+#     CONFIG_=${KCONFIG_CONFIG_PREFIX}
+#     ${KCONFIG_MCONF_BIN}
+#     ${KCONFIG_MERGED_KCONFIG_PATH}
+#     WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
+#     USES_TERMINAL
+# )
 
-# Add savedefconfig target
-kconfig_get_option(${KCONFIG_CONF_BIN} savedefconfig KCONFIG_SAVEDEFCONFIG_OPT)
+# # Add savedefconfig target
+# kconfig_get_option(${KCONFIG_CONF_BIN} savedefconfig KCONFIG_SAVEDEFCONFIG_OPT)
 
-if(KCONFIG_SAVEDEFCONFIG_OPT_FOUND)
-    add_custom_target(
-        savedefconfig
-        COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
-        COMMAND ${CMAKE_COMMAND} -E env
-        KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
-        KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
-        KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
-        KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
-        CONFIG_=${KCONFIG_CONFIG_PREFIX}
-        ${KCONFIG_CONF_BIN}
-        --${KCONFIG_SAVEDEFCONFIG_OPT} ${KCONFIG_DEFCONFIG}
-        ${KCONFIG_MERGED_KCONFIG_PATH}
-        WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-        USES_TERMINAL
-    )
-else()
-    message(FATAL_ERROR "kconfig tool does not support required option: savedefconfig")
-endif()
+# if(KCONFIG_SAVEDEFCONFIG_OPT_FOUND)
+#     add_custom_target(
+#         savedefconfig
+#         COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
+#         COMMAND ${CMAKE_COMMAND} -E env
+#         KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+#         KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+#         KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+#         KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+#         CONFIG_=${KCONFIG_CONFIG_PREFIX}
+#         ${KCONFIG_CONF_BIN}
+#         --${KCONFIG_SAVEDEFCONFIG_OPT} ${KCONFIG_DEFCONFIG}
+#         ${KCONFIG_MERGED_KCONFIG_PATH}
+#         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
+#         USES_TERMINAL
+#     )
+# else()
+#     message(FATAL_ERROR "kconfig tool does not support required option: savedefconfig")
+# endif()
 
-# Add allyesconfig target
-kconfig_get_option(${KCONFIG_CONF_BIN} allyesconfig KCONFIG_ALLYESCONFIG_OPT)
+# # Add allyesconfig target
+# kconfig_get_option(${KCONFIG_CONF_BIN} allyesconfig KCONFIG_ALLYESCONFIG_OPT)
 
-if(KCONFIG_ALLYESCONFIG_OPT_FOUND)
-    add_custom_target(
-        allyesconfig
-        COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
-        COMMAND ${CMAKE_COMMAND} -E env
-        KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
-        KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
-        KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
-        KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
-        CONFIG_=${KCONFIG_CONFIG_PREFIX}
-        ${KCONFIG_CONF_BIN}
-        --${KCONFIG_ALLYESCONFIG_OPT}
-        ${KCONFIG_MERGED_KCONFIG_PATH}
-        WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-        USES_TERMINAL
-    )
-else()
-    message(STATUS "kconfig tool does not support option: allyesconfig")
-endif()
+# if(KCONFIG_ALLYESCONFIG_OPT_FOUND)
+#     add_custom_target(
+#         allyesconfig
+#         COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
+#         COMMAND ${CMAKE_COMMAND} -E env
+#         KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+#         KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+#         KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+#         KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+#         CONFIG_=${KCONFIG_CONFIG_PREFIX}
+#         ${KCONFIG_CONF_BIN}
+#         --${KCONFIG_ALLYESCONFIG_OPT}
+#         ${KCONFIG_MERGED_KCONFIG_PATH}
+#         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
+#         USES_TERMINAL
+#     )
+# else()
+#     message(STATUS "kconfig tool does not support option: allyesconfig")
+# endif()
 
-# Add allmodconfig target
-kconfig_get_option(${KCONFIG_CONF_BIN} allnoconfig KCONFIG_ALLNOCONFIG_OPT)
+# # Add allmodconfig target
+# kconfig_get_option(${KCONFIG_CONF_BIN} allnoconfig KCONFIG_ALLNOCONFIG_OPT)
 
-if(KCONFIG_ALLNOCONFIG_OPT_FOUND)
-    add_custom_target(
-        allnoconfig
-        COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
-        COMMAND ${CMAKE_COMMAND} -E env
-        KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
-        KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
-        KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
-        KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
-        CONFIG_=${KCONFIG_CONFIG_PREFIX}
-        ${KCONFIG_CONF_BIN}
-        --${KCONFIG_ALLNOCONFIG_OPT}
-        ${KCONFIG_MERGED_KCONFIG_PATH}
-        WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-        USES_TERMINAL
-    )
-else()
-    message(STATUS "kconfig tool does not support option: allnoconfig")
-endif()
+# if(KCONFIG_ALLNOCONFIG_OPT_FOUND)
+#     add_custom_target(
+#         allnoconfig
+#         COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
+#         COMMAND ${CMAKE_COMMAND} -E env
+#         KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+#         KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+#         KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+#         KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+#         CONFIG_=${KCONFIG_CONFIG_PREFIX}
+#         ${KCONFIG_CONF_BIN}
+#         --${KCONFIG_ALLNOCONFIG_OPT}
+#         ${KCONFIG_MERGED_KCONFIG_PATH}
+#         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
+#         USES_TERMINAL
+#     )
+# else()
+#     message(STATUS "kconfig tool does not support option: allnoconfig")
+# endif()
 
-# Add allmodconfig target
-kconfig_get_option(${KCONFIG_CONF_BIN} allmodconfig KCONFIG_ALLMODCONFIG_OPT)
+# # Add allmodconfig target
+# kconfig_get_option(${KCONFIG_CONF_BIN} allmodconfig KCONFIG_ALLMODCONFIG_OPT)
 
-if(KCONFIG_ALLMODCONFIG_OPT_FOUND)
-    add_custom_target(
-        allmodconfig
-        COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
-        COMMAND ${CMAKE_COMMAND} -E env
-        KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
-        KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
-        KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
-        KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
-        CONFIG_=${KCONFIG_CONFIG_PREFIX}
-        ${KCONFIG_CONF_BIN}
-        --${KCONFIG_ALLMODCONFIG_OPT}
-        ${KCONFIG_MERGED_KCONFIG_PATH}
-        WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-        USES_TERMINAL
-    )
-else()
-    message(STATUS "kconfig tool does not support option: allmodconfig")
-endif()
+# if(KCONFIG_ALLMODCONFIG_OPT_FOUND)
+#     add_custom_target(
+#         allmodconfig
+#         COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
+#         COMMAND ${CMAKE_COMMAND} -E env
+#         KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+#         KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+#         KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+#         KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+#         CONFIG_=${KCONFIG_CONFIG_PREFIX}
+#         ${KCONFIG_CONF_BIN}
+#         --${KCONFIG_ALLMODCONFIG_OPT}
+#         ${KCONFIG_MERGED_KCONFIG_PATH}
+#         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
+#         USES_TERMINAL
+#     )
+# else()
+#     message(STATUS "kconfig tool does not support option: allmodconfig")
+# endif()
 
-# Add alldefconfig target
-kconfig_get_option(${KCONFIG_CONF_BIN} alldefconfig KCONFIG_ALLDEFCONFIG_OPT)
+# # Add alldefconfig target
+# kconfig_get_option(${KCONFIG_CONF_BIN} alldefconfig KCONFIG_ALLDEFCONFIG_OPT)
 
-if(KCONFIG_ALLDEFCONFIG_OPT_FOUND)
-    add_custom_target(
-        alldefconfig
-        COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
-        COMMAND ${CMAKE_COMMAND} -E env
-        KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
-        KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
-        KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
-        KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
-        CONFIG_=${KCONFIG_CONFIG_PREFIX}
-        ${KCONFIG_CONF_BIN}
-        --${KCONFIG_ALLDEFCONFIG_OPT}
-        ${KCONFIG_MERGED_KCONFIG_PATH}
-        WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-        USES_TERMINAL
-    )
-else()
-    message(STATUS "kconfig tool does not support option: alldefconfig")
-endif()
+# if(KCONFIG_ALLDEFCONFIG_OPT_FOUND)
+#     add_custom_target(
+#         alldefconfig
+#         COMMAND ${CMAKE_COMMAND} -E echo "Saving defconfig to ${KCONFIG_DEFCONFIG}"
+#         COMMAND ${CMAKE_COMMAND} -E env
+#         KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+#         KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+#         KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+#         KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+#         CONFIG_=${KCONFIG_CONFIG_PREFIX}
+#         ${KCONFIG_CONF_BIN}
+#         --${KCONFIG_ALLDEFCONFIG_OPT}
+#         ${KCONFIG_MERGED_KCONFIG_PATH}
+#         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
+#         USES_TERMINAL
+#     )
+# else()
+#     message(STATUS "kconfig tool does not support option: alldefconfig")
+# endif()
 
 # dummy target to sanity check kconfig generated files
 add_custom_target(kconfig_sanity
@@ -673,11 +703,38 @@ else()
     kconfig_import_config("${KCONFIG_CONFIG_PREFIX}" "${KCONFIG_DOTCONFIG_PATH}" KCONFIG_KEYS ON)
 endif()
 
+
 # #######################################################################
-# kconfig_post_configure
+# Everything under here are run during post configure
+
+# #######################################################################
+# __kconfig_post_configure_targets
+#
+# This function will configure each targets registered
+function(__kconfig_post_configure_targets)
+    message(DEBUG "__kconfig_post_configure_targets:")
+    
+    get_property(_kconfig_targets GLOBAL PROPERTY KCONFIG_TARGETS)
+    message(DEBUG "   targets:   ${_kconfig_targets}")
+
+    foreach(tgt ${_kconfig_targets})
+        foreach(key ${_keys})
+            kconfig_split_config("${key}" name value)
+            set_target_properties(${tgt} PROPERTIES ${name} ${value})
+        endforeach()
+
+        # if preinclude is enabled
+        if(KCONFIG_PREINCLUDE_AUTOCONF)
+            target_precompile_headers(${tgt} PUBLIC "${KCONFIG_AUTOHEADER_PATH}")
+        endif()
+    endforeach()
+endfunction()
+
+# #######################################################################
+# __kconfig_post_configure
 #
 # This macro needs to be called last, preferably by deferred call in top level CMakeLists
-macro(kconfig_post_configure)
+macro(__kconfig_post_configure)
     # Generate merged root kconfig
     kconfig_merge_kconfigs("${KCONFIG_MERGED_KCONFIG_PATH}" KCONFIG_CONFIG_SOURCES)
 
@@ -721,5 +778,5 @@ macro(kconfig_post_configure)
     kconfig_print_configs()
 endmacro()
 
-# Add deferred call to kconfig_post_configure
-cmake_language(DEFER CALL kconfig_post_configure)
+# Add deferred call to __kconfig_post_configure
+cmake_language(DEFER CALL __kconfig_post_configure)

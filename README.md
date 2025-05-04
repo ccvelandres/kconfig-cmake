@@ -32,7 +32,7 @@ This script also generates a c header that can be preincluded to targets by sett
   - DEFAULT: `${KCONFIG_BINARY_DIR}/tools`
 - `KCONFIG_CONFIGS_DIR`
   - Path to project configs. Requires at least one file named `defconfig`
-  - DEFAULT: `${CMAKE_BINARY_DIR}/Kconfig`
+  - DEFAULT: `${CMAKE_BINARY_DIR}/config`
 - `KCONFIG_CONFIG_PREFIX`
   - Config prefix used by kconfig
   - DEFAULT: `CONFIG_`
