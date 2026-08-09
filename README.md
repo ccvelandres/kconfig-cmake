@@ -22,16 +22,22 @@ This script also generates a c header that can be preincluded to targets by sett
 # Configuration
 
 - `KCONFIG_DEFCONFIG`
-  - defconfig name to use
-  - DEFAULT: `defconfig`
+  - Path to defconfig
+  - DEFAULT: `${CMAKE_SOURCE_DIR}/configs/defconfig`
+- `KCONFIG_DOTCONFIG_PATH`
+  - Path to create .config file
+  - DEFAULT: `${KCONFIG_BINARY_DIR}/.config`
+- `KCONFIG_PREINCLUDE_AUTOCONF`
+  - Generate pre-compiled header and link to configured targets
+  - DEFAULT: `ON`
+- `KCONFIG_USE_VARIABLES`
+  - Allow kconfig to import configs to cmake variables
+  - DEFAULT: `OFF`
+
+For these variables, the defaults are enough.
+
 - `KCONFIG_BINARY_DIR`
   - Path to create build artifacts (autoconf, autoheader, etc)
-  - DEFAULT: `${CMAKE_BINARY_DIR}/Kconfig`
-- `KCONFIG_KBUILD_DIR`
-  - Path to kconfig binary tools.
-  - DEFAULT: `${KCONFIG_BINARY_DIR}/tools`
-- `KCONFIG_CONFIGS_DIR`
-  - Path to project configs. Requires at least one file named `defconfig`
   - DEFAULT: `${CMAKE_BINARY_DIR}/Kconfig`
 - `KCONFIG_CONFIG_PREFIX`
   - Config prefix used by kconfig
@@ -54,21 +60,13 @@ This script also generates a c header that can be preincluded to targets by sett
 - `KCONFIG_MERGED_KCONFIG_PATH`
   - Path to create generated root kconfig file for project
   - DEFAULT: `${KCONFIG_BINARY_DIR}/Kconfig`
-- `KCONFIG_DOTCONFIG_PATH`
-  - Path to create .config file
-  - DEFAULT: `${KCONFIG_BINARY_DIR}/.config`
-- `KCONFIG_USE_VARIABLES`
-  - Allow kconfig to import configs to cmake variables
+- `KCONFIG_PRINT_SUMMARY`
+  - Prints config summary at end of generation
   - DEFAULT: `OFF`
-- `KCONFIG_PREINCLUDE_AUTOCONF`
-  - Generate pre-compiled header and link to configured targets
-  - DEFAULT: `ON`
 
 # Dependencies
 
-This script requires kconfig binaries (`conf` and `mconf`). 
-The binaries can be built standalone using this repository: `https://github.com/WangNan0/kbuild-standalone`
-If binaries are not installed to PATH, set `KCONFIG_KBUILD_DIR` cmake option.
+This script now requires kconfiglib. Install with `pip install kconfiglib`.
 
 # Sample
 
