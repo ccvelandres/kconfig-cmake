@@ -326,11 +326,12 @@ function(kconfig_merge_kconfigs merged_path source_var)
         ${Python3_EXECUTABLE}
         ${KCONFIG_MERGE_PYBIN}
         --silent
+        --list-sources
         --kconfig ${merged_path}
         --title ${PROJECT_NAME}
         --sources ${kconfig_sources}
         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
-        OUTPUT_QUIET
+        OUTPUT_VARIABLE output
         # ERROR_QUIET
         RESULT_VARIABLE ret
     )
@@ -338,6 +339,11 @@ function(kconfig_merge_kconfigs merged_path source_var)
     if(ret)
         message(FATAL_ERROR "error during kconfig merge: ${ret}")
     endif()
+
+    # set configure depends to kconfig sources
+    string(REPLACE "\n" ";" _sources "${output}")
+    list(FILTER _sources EXCLUDE REGEX "^$")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_sources}")
 endfunction()
 
 # #######################################################################
@@ -369,8 +375,8 @@ function(kconfig_create_cache_fragment cache_fragment)
         file(APPEND ${cache_fragment} "${_config}\n")
     endforeach()
 
-    # file(WRITE ${cache_fragment} "${_configs}")
-    # kconfig_add_fragment(${cache_fragment})
+    
+    file(APPEND ${cache_fragment} "\n") # empty write so file is created if no cache config
     set_property(GLOBAL APPEND PROPERTY KCONFIG_FRAGMENTS "${cache_fragment}")
 endfunction()
 
@@ -526,9 +532,6 @@ function(kconfig_add_kconfig kconfig_file)
 
     # add kconfig file to project
     set_property(GLOBAL APPEND PROPERTY KCONFIG_CONFIG_SOURCES "${_kconfig_file}")
-
-    # reconfigure cmake when kconfig file changes
-    set_property(GLOBAL APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_kconfig_file}")
 endfunction()
 
 # #######################################################################
@@ -585,6 +588,7 @@ endfunction()
 # kconfig_print_configs
 #
 # Print all configs stored in global property KCONFIG_KEYS
+# Enable via KCONFIG_PRINT_SUMMARY
 function(kconfig_print_configs)
     if (KCONFIG_PRINT_SUMMARY)
         message(DEBUG "kconfig_print_configs:")
@@ -599,6 +603,24 @@ function(kconfig_print_configs)
         endforeach()
     endif()
 endfunction()
+
+# #######################################################################
+# kconfig_set_global_properties
+#
+# Import config keys into cmake cache variables
+# Enable via KCONFIG_SET_GLOBAL_PROPERTIES
+macro(kconfig_set_global_properties)
+    if (KCONFIG_SET_GLOBAL_PROPERTIES)
+        message(DEBUG "kconfig_set_global_properties:")
+
+        get_property(_keys GLOBAL PROPERTY KCONFIG_KEYS)
+
+        foreach(key ${_keys})
+            kconfig_split_config("${key}" name value)
+            set_property(GLOBAL PROPERTY ${name} "${value}")
+        endforeach()
+    endif()
+endmacro()
 
 # #######################################################################
 # Kconfig setup
@@ -618,6 +640,7 @@ kconfig_default_variable(KCONFIG_MERGED_KCONFIG_PATH "${KCONFIG_BINARY_DIR}/Kcon
 kconfig_default_variable(KCONFIG_DOTCONFIG_PATH "${KCONFIG_BINARY_DIR}/.config")
 kconfig_default_variable(KCONFIG_PREINCLUDE_AUTOCONF ON)
 kconfig_default_variable(KCONFIG_USE_VARIABLES OFF)
+kconfig_default_variable(KCONFIG_SET_GLOBAL_PROPERTIES ON)
 kconfig_default_variable(KCONFIG_PRINT_SUMMARY OFF)
 
 # Create paths
@@ -679,7 +702,7 @@ endif()
 # setup target with kconfig
 # keys are retrieved from global property: KCONFIG_KEYS
 # keys to configure targets: target to configure
-function(__kconfig_configure_targets config_keys)
+macro(__kconfig_configure_targets config_keys)
     message(DEBUG "__kconfig_configure_targets")
     message(DEBUG "   config_keys:   ${config_keys}")
     get_property(_kconfig_targets GLOBAL PROPERTY KCONFIG_TARGETS)
@@ -704,7 +727,7 @@ function(__kconfig_configure_targets config_keys)
             endif()
         endif()
     endforeach()
-endfunction()
+endmacro()
 
 # #######################################################################
 # __kconfig_post_configure
@@ -763,6 +786,7 @@ macro(__kconfig_post_configure)
 
     # print configs
     kconfig_print_configs()
+    kconfig_set_global_properties()
 endmacro()
 
 # Add deferred call to __kconfig_post_configure
