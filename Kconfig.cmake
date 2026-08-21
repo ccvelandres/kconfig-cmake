@@ -323,6 +323,12 @@ function(kconfig_merge_kconfigs merged_path source_var)
 
     execute_process(COMMAND
         ${CMAKE_COMMAND} -E env
+        KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+        KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+        KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+        KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+        CONFIG_=${KCONFIG_CONFIG_PREFIX}
+        srctree=${KCONFIG_SRCTREE}
         ${Python3_EXECUTABLE}
         ${KCONFIG_MERGE_PYBIN}
         --silent
@@ -396,6 +402,11 @@ function(kconfig_merge_fragments kconfig_file merged_config)
 
     execute_process(COMMAND
         ${CMAKE_COMMAND} -E env
+        KCONFIG_AUTOHEADER=${KCONFIG_AUTOHEADER_PATH}
+        KCONFIG_AUTOCONFIG=${KCONFIG_AUTOCONFIG_PATH}
+        KCONFIG_TRISTATE=${KCONFIG_TRISTATE_PATH}
+        KCONFIG_CONFIG=${KCONFIG_DOTCONFIG_PATH}
+        CONFIG_=${KCONFIG_CONFIG_PREFIX}
         srctree=${KCONFIG_SRCTREE}
         ${Python3_EXECUTABLE} ${KCONFIG_MERGE_FRAGMENTS_PYBIN}
         ${kconfig_file}
