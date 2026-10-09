@@ -30,9 +30,6 @@ This script also generates a c header that can be preincluded to targets by sett
 - `KCONFIG_PREINCLUDE_AUTOCONF`
   - Generate pre-compiled header and link to configured targets
   - DEFAULT: `ON`
-- `KCONFIG_USE_VARIABLES`
-  - Allow kconfig to import configs to cmake variables
-  - DEFAULT: `OFF`
 - `KCONFIG_SET_GLOBAL_PROPERTIES`
   - Set config keys to cmake global properties
   - DEFAULT: `ON`
