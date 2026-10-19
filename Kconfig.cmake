@@ -655,7 +655,7 @@ set(KCONFIG_MERGE_FRAGMENTS_PYBIN "${KCONFIG_MODULE_PATH}/merge-fragments.py")
 # check if KCONFIG_DEFCONFIG exists
 __kconfig_make_absolute(KCONFIG_DEFCONFIG)
 if(NOT EXISTS "${KCONFIG_DEFCONFIG}")
-    __kconfig_make_parent_dir(${KCONFIG_DEFCONFIG_DIR})
+    __kconfig_make_parent_dir(${KCONFIG_DEFCONFIG})
     file(TOUCH ${KCONFIG_DEFCONFIG})
 endif()
 
