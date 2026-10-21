@@ -68,11 +68,11 @@ endmacro()
 #
 # Helper macro to convert paths to absolute paths
 # path: path to convert
-macro(__kconfig_make_absolute path)
+function(__kconfig_make_absolute path)
     # Create parent directory, since genconfig does not create it
     get_filename_component(abspath "${${path}}" ABSOLUTE)
-        set(${path} "${abspath}")
-endmacro()
+    set(${path} "${abspath}" PARENT_SCOPE)
+endfunction()
 
 # #######################################################################
 # __kconfig_find_bin <paths> <name> <bin [...]>
@@ -127,6 +127,78 @@ macro(__kconfig_check_module)
         endif()
     endif()
 endmacro()
+
+# #######################################################################
+# __kconfig_register_project_depends
+#
+# Register file/path to trigger cmake re-configure on change
+macro(__kconfig_register_project_depends list)
+    message(DEBUG "__kconfig_register_project_depends:")
+    # for 4.4+ can use LIST TRANSFORM APPLY 
+    # list(TRANSFORM list APPLY __kconfig_make_absolute)
+    foreach(_p ${list})
+        __kconfig_make_absolute(_p)
+        message(DEBUG "\t ${_p}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_p}")
+    endforeach()
+endmacro()
+
+# #######################################################################
+# __kconfig_register_config_depends
+#
+# Register file/path to re-trigger config recreation
+# Changes to these files imply cmake re-configure
+macro(__kconfig_register_config_depends list)
+    message(DEBUG "__kconfig_register_config_depends:")
+    # for 4.4+ can use LIST TRANSFORM APPLY 
+    # list(TRANSFORM list APPLY __kconfig_make_absolute)
+    foreach(_p ${list})
+        __kconfig_make_absolute(_p)
+        message(DEBUG "\t ${_p}")
+        set_property(GLOBAL APPEND PROPERTY KCONFIG_CONFIGURE_DEPENDS "${_p}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_p}")
+    endforeach()
+endmacro()
+
+# #######################################################################
+# __kconfig_compare_hash
+#
+# If either a file is missing or the hash changed, then set varname to TRUE
+function(__kconfig_compare_hash hashfile source_var varname)
+    message(DEBUG "__kconfig_compare_hash:")
+    message(DEBUG "\t hashfile:     ${hashfile}")
+    message(DEBUG "\t source_var:   ${source_var}")
+    message(DEBUG "\t varname:      ${varname}")
+
+    get_property(kconfig_depends GLOBAL PROPERTY ${source_var})
+    set(_hash_string "")
+    set(_hash_changed FALSE)
+
+    foreach(_depend ${kconfig_depends})
+        if(NOT EXISTS "${_depend}")
+            set(hash "MISSING")
+            set(_hash_changed TRUE)
+        else()
+            file(SHA256 "${_depend}" hash)
+        endif()
+        string(APPEND _hash_string "${hash} ${_depend}\n")
+    endforeach()
+
+    if(EXISTS "${hashfile}")
+        file(READ "${hashfile}" _last__hash_string)
+        if(NOT "${_hash_string}" STREQUAL "${_last__hash_string}")
+            set(_hash_changed TRUE)
+        endif()
+    else()
+        set(_hash_changed TRUE)
+    endif()
+
+    if(_hash_changed)
+        file(WRITE "${hashfile}" "${_hash_string}")
+    endif()
+
+    set(${varname} ${_hash_changed} PARENT_SCOPE)
+endfunction()
 
 # #######################################################################
 # __kconfig_check_binaries
@@ -315,11 +387,13 @@ endmacro()
 # source_prop: name of global property holding all kconfig paths
 function(__kconfig_merge_kconfigs merged_path source_var)
     message(DEBUG "__kconfig_merge_kconfigs:")
-    message(STATUS "Generating merged Kconfig:")
     message(DEBUG "\t merged_path:     ${merged_path}")
     message(DEBUG "\t source_var:      ${source_var}")
     get_property(kconfig_sources GLOBAL PROPERTY ${source_var})
-    message(DEBUG "\t kconfig_sources: ${kconfig_sources}")
+    message(DEBUG "\t kconfig_sources:")
+    foreach(_source "${kconfig_sources}")
+        message(DEBUG "\t\t ${_source}")
+    endforeach()
 
     execute_process(COMMAND
         ${CMAKE_COMMAND} -E env
@@ -349,19 +423,21 @@ function(__kconfig_merge_kconfigs merged_path source_var)
     # set configure depends to kconfig sources
     string(REPLACE "\n" ";" _sources "${output}")
     list(FILTER _sources EXCLUDE REGEX "^$")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_sources}")
+    __kconfig_register_config_depends("${_sources}")
 endfunction()
 
 # #######################################################################
 # kconfig_add_fragment <fragment>
 #
 # Add a config fragment to the build
+# Imply kconfig reconfigure on fragment change
 # fragment: config fragment to add
 function(kconfig_add_fragment fragment)
     message(DEBUG "kconfig_add_fragment:")
-    message(DEBUG "\t fragment: ${fragment}")
+    message(DEBUG "\t ${fragment}")
 
     set_property(GLOBAL APPEND PROPERTY KCONFIG_FRAGMENTS "${fragment}")
+    __kconfig_register_config_depends("${fragment}")
 endfunction()
 
 # #######################################################################
@@ -383,7 +459,7 @@ function(__kconfig_create_cache_fragment cache_fragment config_keys)
     endforeach()
 
     file(APPEND ${cache_fragment} "\n") # empty write so file is created if no cache config
-    set_property(GLOBAL APPEND PROPERTY KCONFIG_FRAGMENTS "${cache_fragment}")
+    kconfig_add_fragment("${cache_fragment}")
 endfunction()
 
 # #######################################################################
@@ -399,7 +475,10 @@ function(__kconfig_merge_fragments kconfig_file merged_config)
     message(DEBUG "\t merged_config:  ${merged_config}")
 
     get_property(_fragments GLOBAL PROPERTY KCONFIG_FRAGMENTS)
-    message(DEBUG "\t fragments: ${_fragments}")
+    message(DEBUG "\t fragments:")
+    foreach(_fragment "${_fragments}")
+        message(DEBUG "\t\t ${_fragment}")
+    endforeach()
 
     execute_process(COMMAND
         ${CMAKE_COMMAND} -E env
@@ -437,6 +516,7 @@ function(__kconfig_import_cache_variables config_prefix)
 
     foreach(var ${cache_variables})
         if("${var}" MATCHES "^${config_prefix}")
+            message(DEBUG "\t\t ${var}=${${var}}")
             set(_config "${var}=${${var}}")
             set_property(GLOBAL APPEND PROPERTY KCONFIG_CACHE_CONFIGS "${_config}")
         endif()
@@ -474,10 +554,10 @@ macro(__kconfig_import_config config_prefix config_file config_keys cache)
     # ie. CONFIG_OPTION_X=y -> set(CONFIG_OPTION_X "ON")
     # ie. CONFIG_OPTION_X=n -> set(CONFIG_OPTION_X "OFF")
     message(DEBUG "__kconfig_import_config")
-    message(DEBUG "   config_prefix: ${config_prefix}")
-    message(DEBUG "   config_file:   ${config_file}")
-    message(DEBUG "   config_keys:   ${config_keys}")
-    message(DEBUG "   cache:         ${cache}")
+    message(DEBUG "\t config_prefix: ${config_prefix}")
+    message(DEBUG "\t config_file:   ${config_file}")
+    message(DEBUG "\t config_keys:   ${config_keys}")
+    message(DEBUG "\t cache:         ${cache}")
     file(STRINGS ${config_file} DEFCONFIG_LIST)
 
     # clear property
@@ -497,7 +577,7 @@ macro(__kconfig_import_config config_prefix config_file config_keys cache)
         endif()
 
         string(TOUPPER "${CONFIG_VALUE}" CONFIG_VALUE)
-        message(DEBUG "\t ${CONFIG_NAME}: ${CONFIG_VALUE}")
+        message(DEBUG "\t\t ${CONFIG_NAME}: ${CONFIG_VALUE}")
 
         # Convert Y -> ON, N -> OFF
         if("${CONFIG_VALUE}" MATCHES "Y")
@@ -520,7 +600,7 @@ endmacro()
 # kconfig_file: path to kconfig file to add
 function(kconfig_add_kconfig kconfig_file)
     message(DEBUG "kconfig_add_kconfig")
-    message(DEBUG "   kconfig_file:   ${kconfig_file}")
+    message(DEBUG "\t kconfig_file:   ${kconfig_file}")
 
     if(NOT IS_ABSOLUTE ${kconfig_file})
         set(_kconfig_file "${CMAKE_CURRENT_SOURCE_DIR}/${kconfig_file}")
@@ -539,7 +619,7 @@ endfunction()
 # target: target to configure
 function(kconfig_add_target target)
     message(DEBUG "kconfig_add_target")
-    message(DEBUG "   target:   ${target}")
+    message(DEBUG "\t target:   ${target}")
 
     # add target to list of kconfig targets
     set_property(GLOBAL APPEND PROPERTY KCONFIG_TARGETS "${target}")
@@ -602,10 +682,10 @@ endfunction()
 # __kconfig_set_global_properties <config_keys>
 #
 # Import config keys into cmake cache variables
-# Enable via __KCONFIG_SET_GLOBAL_PROPERTIES
+# Enable via KCONFIG_SET_GLOBAL_PROPERTIES
 # config_keys: global property key name that contains the keys
 macro(__kconfig_set_global_properties config_keys)
-    if (__KCONFIG_SET_GLOBAL_PROPERTIES)
+    if (KCONFIG_SET_GLOBAL_PROPERTIES)
         message(DEBUG "__kconfig_set_global_properties:")
         message(DEBUG "\t keys:     ${config_keys}")
 
@@ -621,22 +701,26 @@ endmacro()
 # #######################################################################
 # Kconfig setup
 
-# Check defaults for variable
-__kconfig_default_variable(KCONFIG_DEFCONFIG "${CMAKE_SOURCE_DIR}/configs/defconfig")
-__kconfig_default_variable(KCONFIG_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
-__kconfig_default_variable(KCONFIG_SRCTREE "${CMAKE_SOURCE_DIR}")
+# Check defaults for variables
 __kconfig_default_variable(KCONFIG_BINARY_DIR "${CMAKE_BINARY_DIR}/Kconfig")
-__kconfig_default_variable(KCONFIG_BINARY_TMP_DIR "${KCONFIG_BINARY_DIR}/tmp")
-__kconfig_default_variable(KCONFIG_CONFIG_PREFIX "CONFIG_")
 __kconfig_default_variable(KCONFIG_INCLUDE_PATH "${KCONFIG_BINARY_DIR}/include")
+__kconfig_default_variable(KCONFIG_DEFCONFIG "${CMAKE_SOURCE_DIR}/configs/defconfig")
+__kconfig_default_variable(KCONFIG_DOTCONFIG_PATH "${KCONFIG_BINARY_DIR}/.config")
+__kconfig_default_variable(KCONFIG_PREINCLUDE_AUTOCONF ON)
+
+__kconfig_default_variable(KCONFIG_SET_GLOBAL_PROPERTIES ON)
+__kconfig_default_variable(KCONFIG_SRCTREE "${CMAKE_SOURCE_DIR}")
+__kconfig_default_variable(KCONFIG_CONFIG_PREFIX "CONFIG_")
 __kconfig_default_variable(KCONFIG_TRISTATE_PATH "${KCONFIG_INCLUDE_PATH}/config/tristate.conf")
 __kconfig_default_variable(KCONFIG_AUTOCONFIG_PATH "${KCONFIG_INCLUDE_PATH}/config/auto.conf")
 __kconfig_default_variable(KCONFIG_AUTOHEADER_PATH "${KCONFIG_INCLUDE_PATH}/generated/config.h")
 __kconfig_default_variable(KCONFIG_MERGED_KCONFIG_PATH "${KCONFIG_BINARY_DIR}/Kconfig")
-__kconfig_default_variable(KCONFIG_DOTCONFIG_PATH "${KCONFIG_BINARY_DIR}/.config")
-__kconfig_default_variable(KCONFIG_PREINCLUDE_AUTOCONF ON)
-__kconfig_default_variable(__KCONFIG_SET_GLOBAL_PROPERTIES ON)
 __kconfig_default_variable(KCONFIG_PRINT_SUMMARY OFF)
+
+__kconfig_default_variable(KCONFIG_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+__kconfig_default_variable(KCONFIG_BINARY_TMP_DIR "${KCONFIG_BINARY_DIR}/tmp")
+__kconfig_default_variable(KCONFIG_DEPENDS_FILE "${KCONFIG_BINARY_DIR}/.hash")
+__kconfig_default_variable(KCONFIG_CACHE_FRAGMENT "${KCONFIG_BINARY_DIR}/fragments/cache.fragment")
 
 # Create paths
 __kconfig_make_dir(${KCONFIG_BINARY_TMP_DIR})
@@ -674,18 +758,27 @@ add_custom_target(kconfig_sanity
     ${KCONFIG_AUTOCONFIG_PATH}
     ${KCONFIG_TRISTATE_PATH})
 
-# Reconfigure cmake when config changes
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KCONFIG_DEFCONFIG}")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KCONFIG_DOTCONFIG_PATH}")
+# Reconfigure project when dotconfig changes
+__kconfig_register_project_depends("${KCONFIG_DOTCONFIG_PATH}")
 
 # Add Kconfig binary dir to clean targets
 set_property(DIRECTORY APPEND PROPERTY ADDITIONAL_CLEAN_FILES "${KCONFIG_BINARY_DIR}")
 
+# Check if there's fragments specified via configs
+if (DEFINED KCONFIG_FRAGMENTS)
+    kconfig_add_fragment("${KCONFIG_FRAGMENTS}")
+endif()
+
+# Create cache fragment if not exists
+if(NOT EXISTS "${KCONFIG_CACHE_FRAGMENT}")
+    __kconfig_import_cache_variables("${KCONFIG_CONFIG_PREFIX}" KCONFIG_CACHE_CONFIGS)
+    __kconfig_create_cache_fragment("${KCONFIG_CACHE_FRAGMENT}" KCONFIG_CACHE_CONFIGS)
+else()
+    kconfig_add_fragment("${KCONFIG_CACHE_FRAGMENT}")
+endif()
+
 # Import defconfig initially if dotconfig does not exist
 if(NOT EXISTS ${KCONFIG_DOTCONFIG_PATH})
-    # Convert to cache config variables to config fragment
-    __kconfig_import_cache_variables("${KCONFIG_CONFIG_PREFIX}" KCONFIG_CACHE_CONFIGS)
-    __kconfig_create_cache_fragment("${KCONFIG_BINARY_DIR}/fragments/cache.fragment" KCONFIG_CACHE_CONFIGS)
     __kconfig_import_config("${KCONFIG_CONFIG_PREFIX}" "${KCONFIG_DEFCONFIG}" KCONFIG_KEYS ON)
 else()
     __kconfig_import_config("${KCONFIG_CONFIG_PREFIX}" "${KCONFIG_DOTCONFIG_PATH}" KCONFIG_KEYS ON)
@@ -703,10 +796,13 @@ endif()
 # config_keys: global property key name that contains the keys
 macro(__kconfig_configure_targets targets config_keys)
     message(DEBUG "__kconfig_configure_targets")
-    message(DEBUG "   config_keys:   ${config_keys}")
+    message(DEBUG "\t config_keys:   ${config_keys}")
     get_property(_kconfig_targets GLOBAL PROPERTY ${targets})
     get_property(_keys GLOBAL PROPERTY ${config_keys})
-    message(DEBUG "   targets:   ${_kconfig_targets}")
+    message(DEBUG "\t targets:")
+    foreach(_target "${_kconfig_targets}")
+        message(DEBUG "\t\t ${_target}")
+    endforeach()
 
     foreach(tgt ${_kconfig_targets})
         foreach(key ${_keys})
@@ -735,23 +831,27 @@ endmacro()
 macro(__kconfig_post_configure)
     # Generate merged root kconfig
     __kconfig_merge_kconfigs("${KCONFIG_MERGED_KCONFIG_PATH}" KCONFIG_CONFIG_SOURCES)
+    
+    # Check if any kconfig config files have changed
+    __kconfig_compare_hash("${KCONFIG_DEPENDS_FILE}" KCONFIG_CONFIGURE_DEPENDS _kconfig_reconfigure)
 
     # Generate initial .config file if .config does not exist yet
     if(NOT EXISTS ${KCONFIG_DOTCONFIG_PATH})
-        set(defconfig_tmp "${KCONFIG_BINARY_DIR}/.defconfig")
-
-        # Merge dotconfig with fragments
-        __kconfig_merge_fragments(${KCONFIG_MERGED_KCONFIG_PATH} ${defconfig_tmp} ${KCONFIG_DEFCONFIG})
-
         message(STATUS "Using defconfig: ${KCONFIG_DEFCONFIG}")
         __kconfig_defconfig(
             "${KCONFIG_MERGED_KCONFIG_PATH}"
-            "${defconfig_tmp}"
+            "${KCONFIG_DEFCONFIG}"
             "${KCONFIG_DOTCONFIG_PATH}"
             "${KCONFIG_AUTOHEADER_PATH}"
             "${KCONFIG_AUTOCONFIG_PATH}"
             "${KCONFIG_TRISTATE_PATH}"
         )
+    endif()
+
+    # We now only merge fragments whenever kconfig input files have changed
+    if (_kconfig_reconfigure)
+        # Merge dotconfig with fragments
+        __kconfig_merge_fragments(${KCONFIG_MERGED_KCONFIG_PATH} ${KCONFIG_DOTCONFIG_PATH} ${KCONFIG_DEFCONFIG})
     endif()
 
     # Use tmp paths for .config and autoheader to prevent recompiling targets
@@ -768,12 +868,12 @@ macro(__kconfig_post_configure)
         "${KCONFIG_TRISTATE_PATH}"
     )
 
-    # reimport dotconfig file
-    __kconfig_import_config("${KCONFIG_CONFIG_PREFIX}" "${KCONFIG_DOTCONFIG_PATH}" KCONFIG_KEYS ON)
-
     # Update .config and autoheader if new files are different
     file(COPY_FILE ${dotconfig_tmp} ${KCONFIG_DOTCONFIG_PATH} ONLY_IF_DIFFERENT)
     file(COPY_FILE ${autoheader_tmp} ${KCONFIG_AUTOHEADER_PATH} ONLY_IF_DIFFERENT)
+
+    # reimport dotconfig file
+    __kconfig_import_config("${KCONFIG_CONFIG_PREFIX}" "${KCONFIG_DOTCONFIG_PATH}" KCONFIG_KEYS ON)
 
     # Configure targets
     __kconfig_configure_targets(KCONFIG_TARGETS KCONFIG_KEYS)

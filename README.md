@@ -6,10 +6,17 @@ Copy or add this repository as submodule into the project directory then include
 
 - `kconfig_add_kconfig` -> Add Kconfig files to the project
 - `kconfig_add_target` -> Configure the target with the configs
+- `kconfig_add_fragment` -> Add fragments to the project
 
 To conditionally link targets, add defines, etc depending on certain configs, use cmake generator expressions.
 
 This script also generates a c header that can be preincluded to targets by setting `KCONFIG_PREINCLUDE_AUTOCONF` to `ON`. Alternatively, source files can just include it within the files itself. 
+
+## Fragments
+
+Kconfig fragments can be added to the build in 2 ways:
+- from commandline using `KCONFIG_FRAGMENTS`
+- from function using `kconfig_add_fragment`
 
 ## Kconfig Targets
 
@@ -21,6 +28,8 @@ This script also generates a c header that can be preincluded to targets by sett
 
 # Configuration
 
+These variables are ones likely to be customized depending on project needs.
+
 - `KCONFIG_DEFCONFIG`
   - Path to defconfig
   - DEFAULT: `${CMAKE_SOURCE_DIR}/configs/defconfig`
@@ -30,21 +39,23 @@ This script also generates a c header that can be preincluded to targets by sett
 - `KCONFIG_PREINCLUDE_AUTOCONF`
   - Generate pre-compiled header and link to configured targets
   - DEFAULT: `ON`
-- `KCONFIG_SET_GLOBAL_PROPERTIES`
-  - Set config keys to cmake global properties
-  - DEFAULT: `ON`
+- `KCONFIG_FRAGMENTS`
+  - List of kconfig fragments to include
 
 For these variables, the defaults are enough.
 
+- `KCONFIG_SET_GLOBAL_PROPERTIES`
+  - Set config keys to cmake global properties
+  - DEFAULT: `ON`
+- `KCONFIG_SRCTREE`
+  - Set the srctree used by kconfig
+  - DEFAULT: `${CMAKE_SOURCE_DIR}`
 - `KCONFIG_BINARY_DIR`
   - Path to create build artifacts (autoconf, autoheader, etc)
   - DEFAULT: `${CMAKE_BINARY_DIR}/Kconfig`
 - `KCONFIG_CONFIG_PREFIX`
   - Config prefix used by kconfig
   - DEFAULT: `CONFIG_`
-- `KCONFIG_CONFIG_FRAGMENT_DIR`
-  - Path to binary config fragments
-  - DEFAULT: `${KCONFIG_BINARY_DIR}/fragments`
 - `KCONFIG_INCLUDE_PATH`
   - Path to include directory for generated headers
   - DEFAULT: `${KCONFIG_BINARY_DIR}/include`
