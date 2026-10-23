@@ -436,7 +436,14 @@ function(kconfig_add_fragment fragment)
     message(DEBUG "kconfig_add_fragment:")
     message(DEBUG "\t ${fragment}")
 
-    set_property(GLOBAL APPEND PROPERTY KCONFIG_FRAGMENTS "${fragment}")
+    # for 4.4+ can use LIST TRANSFORM APPLY 
+    # list(TRANSFORM list APPLY __kconfig_make_absolute)
+    foreach(_p ${fragment})
+        __kconfig_make_absolute(_p)
+        message(DEBUG "\t ${_p}")
+        set_property(GLOBAL APPEND PROPERTY KCONFIG_FRAGMENTS "${_p}")
+    endforeach()
+
     __kconfig_register_config_depends("${fragment}")
 endfunction()
 
@@ -463,19 +470,19 @@ function(__kconfig_create_cache_fragment cache_fragment config_keys)
 endfunction()
 
 # #######################################################################
-# __kconfig_merge_fragments <kconfig_file> <merged_config> <...>
+# __kconfig_merge_fragments <kconfig_file> <dotconfig> <...>
 #
 # Merged .config together with cache fragments
 # kconfig_file: path to kconfig file
-# merged_config: path to merged config
+# dotconfig: path to merged config
 # plus additional config files
-function(__kconfig_merge_fragments kconfig_file merged_config)
+function(__kconfig_merge_fragments kconfig_file dotconfig)
     message(DEBUG "__kconfig_merge_fragments:")
     message(DEBUG "\t kconfig_file:   ${kconfig_file}")
-    message(DEBUG "\t merged_config:  ${merged_config}")
+    message(DEBUG "\t dotconfig:      ${dotconfig}")
 
     get_property(_fragments GLOBAL PROPERTY KCONFIG_FRAGMENTS)
-    message(DEBUG "\t fragments:")
+    message(DEBUG "\t fragments: ${_fragments}")
     foreach(_fragment "${_fragments}")
         message(DEBUG "\t\t ${_fragment}")
     endforeach()
@@ -490,11 +497,11 @@ function(__kconfig_merge_fragments kconfig_file merged_config)
         srctree=${KCONFIG_SRCTREE}
         ${Python3_EXECUTABLE} ${KCONFIG_MERGE_FRAGMENTS_PYBIN}
         ${kconfig_file}
-        ${merged_config}
-        ${_fragments} ${ARGN}
+        ${dotconfig}
+        ${_fragments}
         WORKING_DIRECTORY ${KCONFIG_BINARY_DIR}
         # ERROR_QUIET # will also disable warnings so prefer not to
-        OUTPUT_QUIET
+        # OUTPUT_QUIET # show which fragments are merged
         RESULT_VARIABLE ret)
 
     if (ret)
@@ -851,7 +858,7 @@ macro(__kconfig_post_configure)
     # We now only merge fragments whenever kconfig input files have changed
     if (_kconfig_reconfigure)
         # Merge dotconfig with fragments
-        __kconfig_merge_fragments(${KCONFIG_MERGED_KCONFIG_PATH} ${KCONFIG_DOTCONFIG_PATH} ${KCONFIG_DEFCONFIG})
+        __kconfig_merge_fragments(${KCONFIG_MERGED_KCONFIG_PATH} ${KCONFIG_DOTCONFIG_PATH})
     endif()
 
     # Use tmp paths for .config and autoheader to prevent recompiling targets
